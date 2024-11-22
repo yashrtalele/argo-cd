@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/argoproj/argo-cd/v2/common"
 	certutil "github.com/argoproj/argo-cd/v2/util/cert"
@@ -32,6 +33,8 @@ const (
 	envRedisSentinelPassword = "REDIS_SENTINEL_PASSWORD"
 	// envRedisSentinelUsername is an env variable name which stores redis sentinel username
 	envRedisSentinelUsername = "REDIS_SENTINEL_USERNAME"
+	// envRedisCredsFilePath is an env variable name which stores redis cred file path
+	envRedisCredsFilePath = "REDIS_CREDS_FILE_PATH"
 )
 
 const (
@@ -204,22 +207,38 @@ func AddCacheFlagsToCmd(cmd *cobra.Command, opts ...Options) func() (*Cache, err
 				}
 			}
 		}
-		password := os.Getenv(envRedisPassword)
-		username := os.Getenv(envRedisUsername)
-		sentinelUsername := os.Getenv(envRedisSentinelUsername)
-		sentinelPassword := os.Getenv(envRedisSentinelPassword)
-		if opt.FlagPrefix != "" {
-			if val := os.Getenv(opt.getEnvPrefix() + envRedisUsername); val != "" {
-				username = val
+		password := ""
+		username := ""
+		sentinelUsername := ""
+		sentinelPassword := ""
+		redisCredsFilePath := os.Getenv(opt.getEnvPrefix() + envRedisCredsFilePath)
+		if redisCredsFilePath != "" {
+			redisCreds, err := RedisEnv(redisCredsFilePath)
+			if err != nil {
+				return nil, err
 			}
-			if val := os.Getenv(opt.getEnvPrefix() + envRedisPassword); val != "" {
-				password = val
-			}
-			if val := os.Getenv(opt.getEnvPrefix() + envRedisSentinelUsername); val != "" {
-				sentinelUsername = val
-			}
-			if val := os.Getenv(opt.getEnvPrefix() + envRedisSentinelPassword); val != "" {
-				sentinelPassword = val
+			password = redisCreds.password
+			username = redisCreds.username
+			sentinelUsername = redisCreds.sentinelUsername
+			sentinelPassword = redisCreds.sentinelPassword
+		} else {
+			password = os.Getenv(envRedisPassword)
+			username = os.Getenv(envRedisUsername)
+			sentinelUsername = os.Getenv(envRedisSentinelUsername)
+			sentinelPassword = os.Getenv(envRedisSentinelPassword)
+			if opt.FlagPrefix != "" {
+				if val := os.Getenv(opt.getEnvPrefix() + envRedisUsername); val != "" {
+					username = val
+				}
+				if val := os.Getenv(opt.getEnvPrefix() + envRedisPassword); val != "" {
+					password = val
+				}
+				if val := os.Getenv(opt.getEnvPrefix() + envRedisSentinelUsername); val != "" {
+					sentinelUsername = val
+				}
+				if val := os.Getenv(opt.getEnvPrefix() + envRedisSentinelPassword); val != "" {
+					sentinelPassword = val
+				}
 			}
 		}
 
@@ -241,6 +260,31 @@ func AddCacheFlagsToCmd(cmd *cobra.Command, opts ...Options) func() (*Cache, err
 		opt.callOnClientCreated(client)
 		return NewCache(NewRedisCache(client, defaultCacheExpiration, compression)), nil
 	}
+}
+
+// RedisEnv reads env file and returns redis credentials
+func RedisEnv(redisFilePath string) (*RedisCreds, error) {
+	redisCreds := RedisCreds{}
+	viper.SetConfigFile(redisFilePath)
+
+	err := viper.ReadInConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	err = viper.Unmarshal(&redisCreds)
+	if err != nil {
+		return nil, err
+	}
+	return &redisCreds, nil
+}
+
+// RedisCreds strongly types methods to store and retrieve values from env file
+type RedisCreds struct {
+	password         string `mapstructure:"PASSWORD"`
+	username         string `mapstructure:"USERNAME"`
+	sentinelUsername string `mapstructure:"SENTINEL_USERNAME"`
+	sentinelPassword string `mapstructure:"SENTINEL_PASSWORD"`
 }
 
 // Cache provides strongly types methods to store and retrieve values from shared cache
